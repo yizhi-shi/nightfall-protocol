@@ -34,7 +34,7 @@ export class MusicSystem {
     const ctx = this.ctx;
     this.bus = ctx.createGain();
     this.bus.gain.value = 0.0001;
-    this.bus.gain.setTargetAtTime(0.22, ctx.currentTime + 0.1, 1.2);
+    this.bus.gain.setTargetAtTime(0.5, ctx.currentTime + 0.1, 1.2);
     this.bus.connect(this.audio.master);
 
     this.layers.pad = ctx.createGain();
@@ -186,7 +186,7 @@ export class MusicSystem {
     };
     const notes = sets[kind] || sets.relay;
     notes.forEach((n, i) => {
-      this.note(midi(n), kind === 'win' ? 1.6 : 0.7, 0.055, 'triangle', 2600, this.bus, t + i * 0.12);
+      this.note(midi(n), kind === 'win' ? 1.6 : 0.7, 0.075, 'triangle', 2600, this.bus, t + i * 0.12);
     });
   }
 
