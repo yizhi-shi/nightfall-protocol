@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#050809">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23060d0f'/%3E%3Crect x='10' y='10' width='44' height='44' fill='none' stroke='%238df6dd' stroke-width='2'/%3E%3Ctext x='32' y='44' font-size='30' text-anchor='middle' fill='%238df6dd' font-family='sans-serif'%3E%E5%A4%9C%3C/text%3E%3C/svg%3E">
+<meta name="description" content="夜幕协议：一个完全程序化生成的单文件第一人称射击游戏。">
+<title>夜幕协议 — 07 号泵站</title>
+<!-- Three.js r160.1 (MIT License, https://threejs.org) is bundled inline. All game assets are generated procedurally at runtime. -->
+<style>
+/*__CSS__*/
+</style>
+</head>
+<body data-state="boot">
+<canvas id="scene" aria-label="夜幕协议游戏画面"></canvas>
+
+<div id="ui">
+  <section id="boot-screen" class="screen boot-screen">
+    <div class="boot-inner">
+      <div class="logo-lockup">
+        <div class="brand-mark large"><span>夜</span><i></i><span>幕</span></div>
+        <div><b>夜幕协议</b><small>战术撤离行动</small></div>
+      </div>
+      <div class="boot-rule"><i></i><span>程序化运行时</span></div>
+      <div class="boot-title">正在生成 07 号区</div>
+      <div class="boot-bar"><i></i></div>
+      <div class="boot-log">降雨系统 // 光照烘焙 // 音频合成</div>
+    </div>
+  </section>
+  <div id="lens" aria-hidden="true"></div>
+  <div id="damage-vignette" aria-hidden="true"></div>
+  <div id="low-health" aria-hidden="true"></div>
+  <div id="flash" aria-hidden="true"></div>
+
+  <div id="hud" aria-hidden="true">
+    <section class="mission-panel">
+      <div class="brand-row">
+        <div class="brand-mark"><span>夜</span><i></i><span>幕</span></div>
+        <div>
+          <div class="eyebrow" id="mission-kicker">任务 01 / 06 · 夜幕行动</div>
+          <div class="mission-title" id="mission-title">07 号泵站 <em>·</em> 主泵区</div>
+        </div>
+        <span id="difficulty-badge" class="difficulty-badge">简单</span>
+      </div>
+      <div class="objective-list" id="objective-list">
+        <div class="objective" data-obj="A">
+          <span class="obj-box"><i></i></span>
+          <span class="obj-text"><b>西区继电器</b><small>恢复西区供电节点</small></span>
+          <span class="obj-dist" data-dist="A">—</span>
+        </div>
+        <div class="objective" data-obj="B">
+          <span class="obj-box"><i></i></span>
+          <span class="obj-text"><b>东区继电器</b><small>恢复东区供电节点</small></span>
+          <span class="obj-dist" data-dist="B">—</span>
+        </div>
+        <div class="objective" data-obj="C">
+          <span class="obj-box"><i></i></span>
+          <span class="obj-text"><b>闸门继电器</b><small>恢复闸门供电节点</small></span>
+          <span class="obj-dist" data-dist="C">—</span>
+        </div>
+        <div class="objective locked" data-obj="extract">
+          <span class="obj-box"><i></i></span>
+          <span class="obj-text"><b>撤离点</b><small>抵达撤离平台</small></span>
+          <span class="obj-dist" data-dist="extract">未解锁</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="top-center">
+      <div class="op-timer"><span id="timer">00:00</span><i>任务计时</i></div>
+      <div id="comms" class="comms">
+        <div class="comms-tag" id="comms-tag">通讯</div>
+        <div class="comms-text" id="comms-text">已进入 07 号区。三座继电器锁死了撤离闸门。先从西侧或东侧检修线开始。</div>
+      </div>
+    </section>
+
+    <section class="map-panel">
+      <div class="map-head"><span>战术地图</span><i id="map-sector">07 区</i></div>
+      <div class="minimap-wrap">
+        <canvas id="minimap" width="360" height="360"></canvas>
+        <div class="map-ring"></div>
+        <div class="map-north">前</div>
+        <div class="map-sweep"></div>
+      </div>
+      <div class="map-foot"><span class="live-dot"></span><span id="hostiles">敌人 0</span><i id="fps">在线</i></div>
+    </section>
+
+    <div id="killfeed" class="killfeed"></div>
+
+    <section class="vitals">
+      <div class="panel-label">生命体征 <i>//</i> 四型</div>
+      <div class="vital-row">
+        <span class="vital-name">生命</span>
+        <div class="vital-bar"><i id="health-fill"></i><b id="health-ghost"></b></div>
+        <span class="vital-num" id="health-num">100</span>
+      </div>
+      <div class="vital-row armor">
+        <span class="vital-name">护甲</span>
+        <div class="vital-bar"><i id="armor-fill"></i></div>
+        <span class="vital-num" id="armor-num">50</span>
+      </div>
+      <div class="vitals-sub"><span>脉搏</span><i class="pulse-line"></i><span id="pulse">稳定</span></div>
+    </section>
+
+    <section class="ammo-panel">
+      <div class="panel-label">主武器 <i>//</i> 九式</div>
+      <div class="weapon-name">九式 <span>冲锋枪</span></div>
+      <div class="ammo-line"><b id="ammo">30</b><span class="slash">/</span><i id="reserve">150</i><em>9×19</em></div>
+      <div class="reload-wrap"><div class="reload-bar" id="reload-bar"><i></i></div><span id="reload-label">就绪</span></div>
+    </section>
+
+    <div id="crosshair" class="crosshair">
+      <i class="ch-t"></i><i class="ch-r"></i><i class="ch-b"></i><i class="ch-l"></i><b></b>
+    </div>
+    <div id="hitmarker" class="hitmarker"><i></i><i></i><i></i><i></i></div>
+    <div id="damage-dir" class="damage-dir"><i></i></div>
+
+    <div id="interact" class="interact">
+      <div class="interact-key">E</div>
+      <div class="interact-body">
+        <div class="interact-title" id="interact-title">按住以覆盖继电器</div>
+        <div class="interact-sub" id="interact-sub">切断硬锁 // 2.4 秒</div>
+        <div class="interact-progress"><i id="interact-progress"></i></div>
+      </div>
+    </div>
+
+    <div class="hud-hints"><span>左键 / F</span> 开火 <span>右键 / Q</span> 开镜 <span>鼠标</span> 360° 转向 <span>WASD</span> 移动 <span>SHIFT</span> 冲刺 <span>R</span> 装弹 <span>ESC</span> 暂停</div>
+  </div>
+
+  <section id="start-screen" class="screen start-screen">
+    <div class="start-grid">
+      <header class="start-top">
+        <div class="logo-lockup">
+          <div class="brand-mark large"><span>夜</span><i></i><span>幕</span></div>
+          <div><b>夜幕协议</b><small>战术撤离行动</small></div>
+        </div>
+        <div class="build-tag">构建 07.19<br>单文件运行</div>
+      </header>
+
+      <div class="hero-copy">
+        <div class="eyebrow"><i></i> <span id="level-tag">任务 01 / 06</span> // 战术撤离</div>
+        <h1>夜幕<span>协议</span></h1>
+        <div class="hero-rule"><i></i><span id="level-tagline">暴雨 / 钢铁 / 零时</span></div>
+        <p id="level-brief">07 号泵站已失联十一分钟。三座继电器锁死了撤离闸门。恢复供电，抵达撤离平台。别让哨兵把你困在雨里。</p>
+        <div class="briefing-line">
+          <div><span class="brief-num">01</span><p>穿过积水的主泵区，找到三座继电器控制台。</p></div>
+          <div><span class="brief-num">02</span><p>在哨兵逼近时按住 <kbd>E</kbd> 完成覆盖。</p></div>
+          <div><span class="brief-num">03</span><p>闸门解锁后脱离交火，踏上撤离平台。</p></div>
+        </div>
+      </div>
+
+      <div class="start-actions">
+        <div class="level-block">
+          <div class="level-block-head"><span>任务选择</span><i>按 [ / ] 切换</i></div>
+          <div class="level-select" id="level-select"></div>
+        </div>
+        <div class="difficulty-block">
+          <span class="difficulty-label">难度</span>
+          <div class="difficulty-select" role="group" aria-label="选择难度">
+            <button class="difficulty-btn active" data-difficulty="easy" type="button" aria-pressed="true">简单</button>
+            <button class="difficulty-btn" data-difficulty="normal" type="button" aria-pressed="false">普通</button>
+            <button class="difficulty-btn" data-difficulty="hard" type="button" aria-pressed="false">困难</button>
+          </div>
+          <span class="difficulty-hint">按 1 / 2 / 3 切换</span>
+        </div>
+        <button id="start-btn" class="cta" type="button">
+          <span class="cta-index">01</span>
+          <span class="cta-label">开始空降</span>
+          <span class="cta-arrow">↗</span>
+        </button>
+        <div class="start-note">点击锁定鼠标指针 <span>•</span> 鼠标可 360° 转身 <span>•</span> 建议佩戴耳机 <span>•</span> 仅限桌面端</div>
+        <div class="fallback-note">鼠标左键损坏：按 <kbd>Enter</kbd> 开始，<kbd>方向键</kbd> 转向，<kbd>F</kbd> 开火，<kbd>Q</kbd> 开镜，<kbd>R</kbd> 装弹。</div>
+      </div>
+
+      <footer class="start-bottom">
+        <div class="control-strip">
+          <span><kbd>W A S D</kbd> 移动</span>
+          <span><kbd>鼠标</kbd> 360° 转向</span>
+          <span><kbd>左键 / F</kbd> 开火</span>
+          <span><kbd>右键 / Q</kbd> 开镜</span>
+          <span><kbd>SHIFT</kbd> 冲刺</span>
+          <span><kbd>E</kbd> 交互</span>
+          <span><kbd>R</kbd> 装弹</span>
+          <span><kbd>方向键</kbd> 辅助转向</span>
+          <span><kbd>ESC</kbd> 暂停</span>
+        </div>
+        <div class="tech-note">全部几何体、纹理、天气与音频均在运行时程序化生成 <span>//</span> 无外部素材</div>
+      </footer>
+    </div>
+  </section>
+
+  <section id="pause-screen" class="screen pause-screen">
+    <div class="pause-card">
+      <div class="eyebrow"><i></i> 行动暂停</div>
+      <h2>暂停</h2>
+      <p>雨还在下。哨兵仍在外面。</p>
+      <div class="pause-stats">
+        <div><span>任务时间</span><b id="pause-time">00:00</b></div>
+        <div><span>击毙敌人</span><b id="pause-kills">0</b></div>
+        <div><span>继电器</span><b id="pause-relays">0 / 3</b></div>
+        <div><span>难度</span><b id="pause-diff">简单</b></div>
+      </div>
+      <div class="pause-controls">
+        <span><kbd>F</kbd> 开火</span>
+        <span><kbd>Q</kbd> 开镜</span>
+        <span><kbd>方向键</kbd> 转向</span>
+        <span><kbd>E</kbd> 交互</span>
+        <span><kbd>R</kbd> 装弹</span>
+        <span><kbd>Enter</kbd> 继续</span>
+      </div>
+      <div class="pause-actions">
+        <button id="resume-btn" class="cta small" type="button"><span class="cta-label">继续行动</span><span class="cta-arrow">↗</span></button>
+        <button id="abort-btn" class="ghost-btn" type="button">中止 / 重新开始</button>
+      </div>
+      <div class="pause-note">按 <kbd>ESC</kbd> 或 <kbd>Enter</kbd> 返回行动。</div>
+    </div>
+  </section>
+
+  <section id="end-screen" class="screen end-screen">
+    <div class="end-card">
+      <div class="end-status" id="end-status">撤离完成</div>
+      <h2 id="end-title">区域<span>肃清</span></h2>
+      <p id="end-copy">闸门已开。07 号区留在身后。雨还没有停，但任务已经结束。</p>
+      <div class="end-stats">
+        <div><span>任务时间</span><b id="end-time">00:00</b></div>
+        <div><span>击毙敌人</span><b id="end-kills">0</b></div>
+        <div><span>命中率</span><b id="end-acc">0%</b></div>
+        <div><span>继电器</span><b id="end-relays">3 / 3</b></div>
+        <div><span>难度</span><b id="end-diff">简单</b></div>
+      </div>
+      <div class="end-rule"></div>
+      <div class="end-actions">
+        <button id="next-btn" class="cta" type="button"><span class="cta-index">02</span><span class="cta-label">下一关</span><span class="cta-arrow">↗</span></button>
+        <button id="restart-btn" class="ghost-btn" type="button">重新部署本关</button>
+      </div>
+      <div class="end-foot">夜幕协议 <span>//</span> 07 号区 <span>//</span> <i id="end-seed">模拟完成</i><br><span class="end-enter" id="end-enter-note">按 ENTER 重新部署</span></div>
+    </div>
+  </section>
+
+  <div id="toast" class="toast"></div>
+</div>
+
+<script>
+/*__JS__*/
+</script>
+</body>
+</html>

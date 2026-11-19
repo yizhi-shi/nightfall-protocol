@@ -1,0 +1,19 @@
+{
+  "name": "nightfall-protocol",
+  "version": "1.0.0",
+  "description": "A single-file Three.js first-person shooter with a six-mission campaign and fully procedural assets.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "serve": "python3 -m http.server 8080"
+  },
+  "keywords": ["threejs", "webgl", "fps", "game", "single-file", "procedural"],
+  "author": "yizhi-shi",
+  "license": "MIT",
+  "dependencies": {
+    "three": "^0.160.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.9"
+  }
+}
