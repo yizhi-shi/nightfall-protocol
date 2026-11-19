@@ -342,6 +342,10 @@ export class Effects {
     this.renderer = renderer;
     this.audio = audio;
     this.time = 0;
+    this.indoor = false;
+    this.rainEnabled = true;
+    this.rainIntensity = 1;
+    this.lightningEnabled = true;
     this.rain = new Rain(scene, lowQuality ? 2100 : 3800);
     this.splashes = new GroundSplashes(scene, lowQuality ? 240 : 500);
     this.softTex = softParticleTexture();
@@ -408,15 +412,40 @@ export class Effects {
     this.addSteamVent(new THREE.Vector3(-12.0, 0.12, -8.0), 0.7);
   }
 
+  applyRainVisibility() {
+    const visible = this.rainEnabled && !this.indoor;
+    this.rain.mesh.visible = visible;
+    this.splashes.mesh.visible = visible;
+    this.rain.material.uniforms.uOpacity.value = 0.4 * this.rainIntensity;
+  }
+
+  setRain(enabled, intensity = 1) {
+    this.rainEnabled = !!enabled;
+    this.rainIntensity = Math.max(0, Math.min(1.4, intensity));
+    this.applyRainVisibility();
+    if (this.audio && this.audio.setRain) this.audio.setRain(this.rainEnabled, this.rainIntensity);
+  }
+
   setIndoor(indoor, dustColor = 0xffcf9a) {
     this.indoor = !!indoor;
-    this.rain.mesh.visible = !this.indoor;
-    this.splashes.mesh.visible = !this.indoor;
+    this.applyRainVisibility();
     if (this.dust) {
       this.dust.visible = this.indoor;
       this.dust.material.color.setHex(dustColor);
     }
     if (this.audio && this.audio.setIndoor) this.audio.setIndoor(this.indoor);
+  }
+
+  setLightningEnabled(enabled) {
+    this.lightningEnabled = !!enabled;
+    if (!this.lightningEnabled) {
+      this.lightningQueue = [];
+      this.lightningBolt = 0;
+      this.flash = 0;
+      this.lightningTimer = 999;
+    } else if (this.lightningTimer > 900) {
+      this.lightningTimer = 14 + Math.random() * 18;
+    }
   }
 
   setDryAreas(areas) {
@@ -627,6 +656,7 @@ export class Effects {
   }
 
   lightningStrike(force = false) {
+    if (!this.lightningEnabled) return;
     this.lightningQueue = force ? [0] : [0, 0.12, 0.22];
     this.lightningTimer = 14 + Math.random() * 18;
   }
@@ -685,15 +715,19 @@ export class Effects {
     }
 
     // lightning scheduler
-    this.lightningTimer -= dt;
-    if (this.lightningTimer <= 0) this.lightningStrike();
-    this.lightningBolt = Math.max(0, this.lightningBolt - dt * 7);
-    if (this.lightningQueue.length && this.lightningQueue[0] <= 0) {
-      this.lightningQueue = [];
-      this.lightningBolt = 1;
-      this.audio.thunder(0.4 + Math.random() * 1.5);
-    } else if (this.lightningQueue.length) {
-      this.lightningQueue[0] -= dt;
+    if (this.lightningEnabled) {
+      this.lightningTimer -= dt;
+      if (this.lightningTimer <= 0) this.lightningStrike();
+      this.lightningBolt = Math.max(0, this.lightningBolt - dt * 7);
+      if (this.lightningQueue.length && this.lightningQueue[0] <= 0) {
+        this.lightningQueue = [];
+        this.lightningBolt = 1;
+        this.audio.thunder(0.4 + Math.random() * 1.5);
+      } else if (this.lightningQueue.length) {
+        this.lightningQueue[0] -= dt;
+      }
+    } else {
+      this.lightningBolt = 0;
     }
     this.flash = this.lightningBolt;
 

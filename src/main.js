@@ -11,6 +11,7 @@ import { Effects } from './effects.js';
 import { Enemy } from './enemy.js';
 import { Hud } from './hud.js';
 import { LEVELS } from './levels.js';
+import { MusicSystem } from './music.js';
 
 const CAMERA_BASE_FOV = 72;
 const EYE_HEIGHT = 1.68;
@@ -152,6 +153,9 @@ class Game {
     this.wavesSpawned = new Set();
     this.invulnerable = false;
     this.deathTimer = 0;
+    this.music = null;
+    this.storyShown = new Set();
+    this.combatCheck = 0;
     this.menuEntered = false;
     this.lockGraceUntil = 0;
     this.suppressLockPause = false;
@@ -211,7 +215,8 @@ class Game {
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = this.lowQuality ? 1.48 : 1.36;
+    const baseExposure = this.level.exposure ?? 1.36;
+    this.renderer.toneMappingExposure = baseExposure + (this.lowQuality ? 0.12 : 0);
     this.renderer.shadowMap.enabled = !this.lowQuality;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setClearColor(0x040809, 1);
@@ -231,7 +236,7 @@ class Game {
       this.renderer.setPixelRatio(this.pixelRatio);
       this.renderer.setSize(window.innerWidth, window.innerHeight, false);
       this.renderer.shadowMap.enabled = false;
-      this.renderer.toneMappingExposure = 1.42;
+      this.renderer.toneMappingExposure = baseExposure + 0.18;
     }
   }
 
@@ -247,6 +252,8 @@ class Game {
     this.effects = new Effects(this.scene, this.camera, this.renderer, this.audio, this.lowQuality);
     this.effects.setDryAreas(this.world.dryAreas || []);
     this.effects.setIndoor(!!this.level.indoor, this.level.dustColor || 0xffcf9a);
+    this.effects.setRain(this.level.rain !== false, this.level.rainIntensity ?? 1);
+    this.effects.setLightningEnabled(this.level.lightning !== false);
     this.hud = new Hud(this.world, this.player);
     this.hud.setLevel(this.level, this.levelIndex, this.levels.length);
     this.camera.position.set(10, 6.3, 18);
@@ -673,7 +680,7 @@ class Game {
       const copy = document.getElementById('end-copy');
       if (st) st.textContent = '战役完成';
       if (title) title.innerHTML = '夜幕<span>终章</span>';
-      if (copy) copy.textContent = '六处行动区全部肃清。中继塔的信号重新亮起，撤离航线已经打开。雨还在下，但这一次，你可以离开了。';
+      if (copy) copy.textContent = this.level.winCopy || '六处行动区全部肃清。中继塔的信号重新亮起，撤离航线已经打开。';
     }
   }
 
@@ -725,6 +732,12 @@ class Game {
     if (this.state === 'playing') return;
     this.audio.init();
     this.audio.resume();
+    this.audio.setRain(this.level.rain !== false, this.level.rainIntensity ?? 1);
+    this.audio.setIndoor(!!this.level.indoor);
+    this.audio.setScene(this.level.key);
+    this.music = new MusicSystem(this.audio);
+    this.music.start(this.level.music || {});
+    this.storyShown.clear();
     this.applyDifficulty();
     this.state = 'playing';
     this.keys = Object.create(null);
@@ -976,6 +989,7 @@ class Game {
       this.hud.showEnd(false, this);
       this.setupEndUI(false);
       this.audio.death();
+      this.music?.sting('lose');
       if (document.pointerLockElement) document.exitPointerLock();
     }
   }
@@ -1300,6 +1314,19 @@ class Game {
   /*  Objectives and waves                                          */
   /* -------------------------------------------------------------- */
 
+  updateStory() {
+    const beats = this.level.story || [];
+    for (let i = 0; i < beats.length; i++) {
+      if (this.storyShown.has(i)) continue;
+      const beat = beats[i];
+      if (this.missionTime >= beat.at) {
+        this.storyShown.add(i);
+        this.audio.radio();
+        this.hud.message(beat.text, beat.title, 8.5);
+      }
+    }
+  }
+
   updateObjectives(dt) {
     const p = this.player;
     if (!p.alive) { this.hud.hidePrompt(); return; }
@@ -1369,6 +1396,7 @@ class Game {
     this.relaysDone = this.world.relays.filter((r) => r.active).length;
     this.hud.objectiveDone(relay.id);
     this.audio.relayComplete();
+    this.music?.sting('relay');
     this.effects.explosion(new THREE.Vector3(relay.pos.x, 1.6, relay.pos.z), 0x5affb5, 0.7);
     this.hud.message(`${relay.name}已上线。闸门锁定率 ${Math.round((this.relaysDone / 3) * 100)}%。`, '通讯', 5);
     this.hud.toast(`${relay.name}在线 // ${this.relaysDone}/3`, 2.2);
@@ -1377,6 +1405,7 @@ class Game {
     if (relay.id === 'B') this.spawnWave('relayB', [4, 5], this.level.messages.waveB);
     if (this.relaysDone >= 3) {
       this.world.gate.open();
+      this.music?.sting('extract');
       this.world.activateExtraction();
       this.hud.extractionOpen();
       this.hud.toast('撤离闸门已开启', 3);
@@ -1410,6 +1439,7 @@ class Game {
     this.hud.showEnd(true, this);
     this.setupEndUI(true);
     this.audio.victory();
+    this.music?.sting('win');
     this.mouseDown = false;
     if (document.pointerLockElement) document.exitPointerLock();
   }
@@ -1455,6 +1485,13 @@ class Game {
     this.updatePlayer(dt);
     this.updateWeapon(dt);
     this.updateObjectives(dt);
+    this.updateStory();
+    this.combatCheck += dt;
+    if (this.combatCheck > 0.4 && this.music) {
+      this.combatCheck = 0;
+      const combat = this.enemies.some((e) => e.active && e.alive && e.group.position.distanceTo(this.player.position) < 38);
+      this.music.setCombat(combat);
+    }
     for (const e of this.enemies) e.update(dt, { player: this.player, enemies: this.enemies });
 
     this.world.update(dt);

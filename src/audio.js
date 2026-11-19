@@ -9,6 +9,10 @@ export class AudioSystem {
     this.muted = false;
     this.ambientOn = false;
     this.indoor = false;
+    this.rainEnabled = true;
+    this.rainIntensity = 1;
+    this.sceneKey = 'pump';
+    this.sceneLayers = null;
     this.rainBus = null;
     this.roomBus = null;
     this.noiseBuffer = null;
@@ -38,12 +42,90 @@ export class AudioSystem {
     if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
   }
 
+  applyRainGain() {
+    if (!this.ctx || !this.rainBus) return;
+    const t = this.ctx.currentTime;
+    const gain = this.rainEnabled ? (this.indoor ? 0.22 : 0.55 * this.rainIntensity) : 0;
+    this.rainBus.gain.setTargetAtTime(gain, t, 0.7);
+  }
+
+  setRain(enabled, intensity = 1) {
+    this.rainEnabled = !!enabled;
+    this.rainIntensity = Math.max(0, Math.min(1.4, intensity));
+    this.applyRainGain();
+  }
+
   setIndoor(v) {
     this.indoor = !!v;
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
-    if (this.rainBus) this.rainBus.gain.setTargetAtTime(this.indoor ? 0.24 : 1.0, t, 0.9);
+    this.applyRainGain();
     if (this.roomBus) this.roomBus.gain.setTargetAtTime(this.indoor ? 0.055 : 0.0, t, 1.1);
+  }
+
+  createSceneLayers() {
+    if (this.sceneLayers || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    const makeNoise = (filterType, freq, gainValue) => {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noiseBuffer;
+      src.loop = true;
+      const f = this.ctx.createBiquadFilter();
+      f.type = filterType;
+      f.frequency.value = freq;
+      const g = this.ctx.createGain();
+      g.gain.value = 0;
+      src.connect(f).connect(g).connect(this.master);
+      src.start(t);
+      return { src, gain: g, value: gainValue };
+    };
+    const makeOsc = (type, freq, gainValue, filterFreq = null) => {
+      const osc = this.ctx.createOscillator();
+      osc.type = type;
+      osc.frequency.value = freq;
+      const g = this.ctx.createGain();
+      g.gain.value = 0;
+      let node = osc;
+      if (filterFreq) {
+        const f = this.ctx.createBiquadFilter();
+        f.type = 'lowpass';
+        f.frequency.value = filterFreq;
+        node.connect(f);
+        node = f;
+      }
+      node.connect(g).connect(this.master);
+      osc.start(t);
+      return { osc, gain: g, value: gainValue };
+    };
+    this.sceneLayers = {
+      wind: makeNoise('lowpass', 520, 0.03),
+      furnace: makeNoise('lowpass', 170, 0.0),
+      hum: makeOsc('sine', 50, 0.0),
+      electric: makeOsc('sawtooth', 118, 0.0, 480),
+      server: makeOsc('sine', 218, 0.0, 900),
+    };
+    this.setScene(this.sceneKey);
+  }
+
+  setScene(key) {
+    this.sceneKey = key || 'pump';
+    if (!this.ctx) return;
+    if (!this.sceneLayers) this.createSceneLayers();
+    if (!this.sceneLayers) return;
+    const maps = {
+      pump: { wind: 0.022, hum: 0.045, electric: 0, furnace: 0, server: 0 },
+      yard: { wind: 0.11, hum: 0.012, electric: 0, furnace: 0, server: 0 },
+      substation: { wind: 0.035, hum: 0.02, electric: 0.065, furnace: 0, server: 0 },
+      foundry: { wind: 0, hum: 0.035, electric: 0, furnace: 0.13, server: 0 },
+      docks: { wind: 0.07, hum: 0.022, electric: 0, furnace: 0, server: 0 },
+      tower: { wind: 0.015, hum: 0.02, electric: 0, furnace: 0, server: 0.06 },
+    };
+    const m = maps[this.sceneKey] || maps.pump;
+    const t = this.ctx.currentTime;
+    for (const [name, layer] of Object.entries(this.sceneLayers)) {
+      const target = m[name] ?? 0;
+      layer.gain.gain.setTargetAtTime(target, t, 1.2);
+    }
   }
 
   doorOpen() {
@@ -109,7 +191,7 @@ export class AudioSystem {
 
     // rain bus lets interiors muffle the storm without stopping it
     this.rainBus = this.ctx.createGain();
-    this.rainBus.gain.value = this.indoor ? 0.24 : 1.0;
+    this.rainBus.gain.value = this.rainEnabled ? (this.indoor ? 0.22 : 0.55 * this.rainIntensity) : 0;
     this.rainBus.connect(this.master);
 
     // layered rain

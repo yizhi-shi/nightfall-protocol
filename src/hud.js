@@ -440,8 +440,8 @@ export class Hud {
     this.el.endStatus.textContent = win ? '撤离完成' : '信号中断';
     this.el.endTitle.innerHTML = win ? '区域<span>肃清</span>' : '干员<span>阵亡</span>';
     this.el.endCopy.textContent = win
-      ? '闸门已开。07 号区留在身后。雨还没有停，但任务已经结束。'
-      : '哨兵守住了主泵区。07 号区仍旧一片黑暗，撤离闸门也没有打开。';
+      ? (game.level?.winCopy || '闸门已开。行动区留在身后，任务已经结束。')
+      : (game.level?.loseCopy || '哨兵守住了行动区。撤离闸门没有打开。');
     this.el.endTime.textContent = fmtTime(game.missionTime);
     this.el.endKills.textContent = String(game.kills);
     this.el.endAcc.textContent = `${game.shots > 0 ? Math.round((game.hits / game.shots) * 100) : 0}%`;

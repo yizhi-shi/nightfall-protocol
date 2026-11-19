@@ -52,6 +52,14 @@ export function makeSky() {
     uniforms: {
       uTime: { value: 0 },
       uLightning: { value: 0 },
+      uHorizon: { value: new THREE.Color(0x18252a) },
+      uZenith: { value: new THREE.Color(0x020408) },
+      uCloud: { value: new THREE.Color(0x050708) },
+      uCity: { value: new THREE.Color(0x29130a) },
+      uSunColor: { value: new THREE.Color(0x9fbde0) },
+      uSunDir: { value: new THREE.Vector3(-0.38, 0.58, 0.32).normalize() },
+      uSunPower: { value: 0.6 },
+      uCloudAmount: { value: 0.82 },
     },
     vertexShader: /* glsl */`
       varying vec3 vDir;
@@ -64,6 +72,14 @@ export function makeSky() {
     fragmentShader: /* glsl */`
       uniform float uTime;
       uniform float uLightning;
+      uniform vec3 uHorizon;
+      uniform vec3 uZenith;
+      uniform vec3 uCloud;
+      uniform vec3 uCity;
+      uniform vec3 uSunColor;
+      uniform vec3 uSunDir;
+      uniform float uSunPower;
+      uniform float uCloudAmount;
       varying vec3 vDir;
       float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453123); }
       float noise(vec2 p){
@@ -79,22 +95,20 @@ export function makeSky() {
       void main() {
         vec3 d = normalize(vDir);
         float h = clamp(d.y * 0.5 + 0.5, 0.0, 1.0);
-        vec3 horizon = vec3(0.095, 0.145, 0.16);
-        vec3 zenith  = vec3(0.008, 0.016, 0.026);
-        vec3 col = mix(horizon, zenith, pow(clamp(d.y,0.0,1.0), 0.55));
+        vec3 col = mix(uHorizon, uZenith, pow(clamp(d.y,0.0,1.0), 0.55));
         vec2 uv = d.xz / (abs(d.y) + 0.24);
         float c = fbm(uv * 1.45 + vec2(uTime*0.0025, uTime*0.0012));
         float c2 = fbm(uv * 3.6 - vec2(uTime*0.006, 0.0));
         float clouds = smoothstep(0.38, 0.79, c*0.82 + c2*0.35);
-        col = mix(col, vec3(0.019,0.029,0.036), clouds * 0.82);
-        float moon = pow(max(dot(d, normalize(vec3(-0.38,0.58,0.32))), 0.0), 320.0);
-        col += vec3(0.62,0.74,0.85) * moon * 0.6;
-        float glow = pow(max(dot(d, normalize(vec3(-0.38,0.58,0.32))), 0.0), 18.0);
-        col += vec3(0.05,0.075,0.1) * glow;
+        col = mix(col, uCloud, clouds * uCloudAmount);
+        float sunDisk = pow(max(dot(d, normalize(uSunDir)), 0.0), 320.0);
+        col += uSunColor * sunDisk * uSunPower;
+        float glow = pow(max(dot(d, normalize(uSunDir)), 0.0), 18.0);
+        col += uSunColor * glow * 0.12 * uSunPower;
         col += vec3(0.6,0.78,1.0) * uLightning * (0.45 + clouds*0.9);
         // distant city glow on the horizon
         float city = pow(max(0.0, 1.0 - abs(d.y)*4.2), 3.0);
-        col += vec3(0.16,0.075,0.028) * city * 0.7;
+        col += uCity * city * 0.7;
         gl_FragColor = vec4(col, 1.0);
       }
     `,
@@ -377,13 +391,25 @@ export class World {
     this.fogDensity = lv.fog?.density ?? 0.0215;
     this.scene.fog = new THREE.FogExp2(this.fogColor, this.fogDensity);
     this.sky = makeSky();
+    if (lv.sky) {
+      const sky = this.sky.material.uniforms;
+      if (lv.sky.horizon) sky.uHorizon.value.setHex(lv.sky.horizon);
+      if (lv.sky.zenith) sky.uZenith.value.setHex(lv.sky.zenith);
+      if (lv.sky.cloud) sky.uCloud.value.setHex(lv.sky.cloud);
+      if (lv.sky.city) sky.uCity.value.setHex(lv.sky.city);
+      if (lv.sky.sunColor) sky.uSunColor.value.setHex(lv.sky.sunColor);
+      if (lv.sky.sunDir) sky.uSunDir.value.set(...lv.sky.sunDir).normalize();
+      if (lv.sky.sunPower !== undefined) sky.uSunPower.value = lv.sky.sunPower;
+      if (lv.sky.cloudAmount !== undefined) sky.uCloudAmount.value = lv.sky.cloudAmount;
+    }
+    this.lightningEnabled = lv.lightning !== false;
     this.scene.add(this.sky);
     this.hemi = new THREE.HemisphereLight(lv.hemi?.sky ?? 0x587a93, lv.hemi?.ground ?? 0x080d10, lv.hemi?.intensity ?? 0.82);
     this.scene.add(this.hemi);
     this.baseHemi = this.hemi.intensity;
     this.moon = new THREE.DirectionalLight(lv.moon?.color ?? 0xc2dcfa, lv.moon?.intensity ?? 1.42);
     this.baseMoon = this.moon.intensity;
-    this.moon.position.set(-24, 36, 18);
+    this.moon.position.set(...(lv.sunPos || [-24, 36, 18]));
     this.moon.castShadow = true;
     this.moon.shadow.mapSize.set(1024, 1024);
     this.moon.shadow.camera.left = -45;
@@ -2056,6 +2082,7 @@ export class World {
   }
 
   setLightning(v) {
+    if (!this.lightningEnabled) v = 0;
     this.sky.material.uniforms.uLightning.value = v;
     this.moon.intensity = (this.baseMoon ?? 1.4) + v * 5.2;
     this.hemi.intensity = (this.baseHemi ?? 0.8) + v * 1.8;
