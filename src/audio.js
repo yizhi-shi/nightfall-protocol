@@ -8,6 +8,9 @@ export class AudioSystem {
     this.master = null;
     this.muted = false;
     this.ambientOn = false;
+    this.indoor = false;
+    this.rainBus = null;
+    this.roomBus = null;
     this.noiseBuffer = null;
     this.lastFootstep = 0;
     this.heartbeat = 0;
@@ -33,6 +36,40 @@ export class AudioSystem {
 
   resume() {
     if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+  }
+
+  setIndoor(v) {
+    this.indoor = !!v;
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    if (this.rainBus) this.rainBus.gain.setTargetAtTime(this.indoor ? 0.24 : 1.0, t, 0.9);
+    if (this.roomBus) this.roomBus.gain.setTargetAtTime(this.indoor ? 0.055 : 0.0, t, 1.1);
+  }
+
+  doorOpen() {
+    if (!this.ctx || !this.noiseBuffer) return;
+    const t = this.ctx.currentTime;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuffer;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 230;
+    bp.Q.value = 1.2;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.12, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    src.connect(bp).connect(g).connect(this.master);
+    src.start(t); src.stop(t + 0.4);
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(78, t);
+    osc.frequency.exponentialRampToValueAtTime(42, t + 0.3);
+    const og = this.ctx.createGain();
+    og.gain.setValueAtTime(0.09, t);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
+    osc.connect(og).connect(this.master);
+    osc.start(t); osc.stop(t + 0.36);
   }
 
   setMuted(m) {
@@ -70,6 +107,11 @@ export class AudioSystem {
     this.ambientOn = true;
     const t = this.ctx.currentTime;
 
+    // rain bus lets interiors muffle the storm without stopping it
+    this.rainBus = this.ctx.createGain();
+    this.rainBus.gain.value = this.indoor ? 0.24 : 1.0;
+    this.rainBus.connect(this.master);
+
     // layered rain
     for (let layer = 0; layer < 3; layer++) {
       const src = this.ctx.createBufferSource();
@@ -84,9 +126,24 @@ export class AudioSystem {
       lp.frequency.value = [2400, 5000, 9000][layer];
       const g = this.ctx.createGain();
       g.gain.value = [0.16, 0.06, 0.022][layer];
-      src.connect(hp).connect(lp).connect(g).connect(this.master);
+      src.connect(hp).connect(lp).connect(g).connect(this.rainBus);
       src.start(t);
     }
+
+    // low room tone for indoor spaces
+    this.roomBus = this.ctx.createGain();
+    this.roomBus.gain.value = this.indoor ? 0.055 : 0.0;
+    this.roomBus.connect(this.master);
+    const roomFilter = this.ctx.createBiquadFilter();
+    roomFilter.type = 'lowpass';
+    roomFilter.frequency.value = 135;
+    const roomGain = this.ctx.createGain();
+    roomGain.gain.value = 1;
+    const roomOsc = this.ctx.createOscillator();
+    roomOsc.type = 'sawtooth';
+    roomOsc.frequency.value = 43.6;
+    roomOsc.connect(roomFilter).connect(roomGain).connect(this.roomBus);
+    roomOsc.start(t);
 
     // low city drone
     const droneGain = this.ctx.createGain();

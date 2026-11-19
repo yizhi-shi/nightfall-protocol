@@ -218,6 +218,8 @@ export class World {
     this.rayMeshes = [];
     this.mapBoxes = [];
     this.relays = [];
+    this.doors = [];
+    this.dryAreas = [];
     this.time = 0;
     this.lampLights = [];
     this.animLights = [];
@@ -334,6 +336,12 @@ export class World {
     this.glowGreen = new THREE.MeshStandardMaterial({
       color: 0x03140c, emissive: 0x58ffab, emissiveIntensity: 4.4, roughness: 0.3, metalness: 0.2,
     });
+    this.ledGreen = this.glowGreen.clone();
+    this.ledGreen.emissiveIntensity = 1.15;
+    this.ledCyan = this.glowCyan.clone();
+    this.ledCyan.emissiveIntensity = 0.9;
+    this.stripRed = this.glowRed.clone();
+    this.stripRed.emissiveIntensity = 1.5;
     this.rippleNormal = rippleNormalTexture();
     this.puddleAlpha = puddleAlphaTexture();
     this.puddleMat = new THREE.MeshStandardMaterial({
@@ -1023,6 +1031,179 @@ export class World {
   /* ------------------------------------------------------------------ */
   /*  Campaign variants                                                  */
   /* ------------------------------------------------------------------ */
+  addDoor(x, z, width, axis = 'x', height = 3.2, label = '气密门') {
+    const door = new SlidingDoor(this, { x, z, width, axis, height, label });
+    this.doors.push(door);
+    return door;
+  }
+
+  updateDoors(dt, playerPos) {
+    for (const d of this.doors) d.update(dt, playerPos);
+  }
+
+
+
+  buildIndoorFloor(x, z, w, d, { color = 0x3a4142, roughness = 0.5, metalness = 0.18 } = {}) {
+    const mat = new THREE.MeshStandardMaterial({
+      map: this.concrete.map, normalMap: this.concrete.normalMap, roughnessMap: this.concrete.roughnessMap,
+      color, roughness, metalness, envMapIntensity: 1.1,
+    });
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(x, 0.018, z);
+    floor.receiveShadow = true;
+    this.scene.add(floor);
+    return floor;
+  }
+
+  buildCeiling(x, z, w, d, y, mat = this.metalDark, { beams = true } = {}) {
+    this.box(x, y, z, w, 0.42, d, mat, { collide: false, shadow: false, ray: false });
+    if (beams) {
+      for (let bx = -w / 2 + 4; bx < w / 2; bx += 8) {
+        this.box(x + bx, y - 0.4, z, 0.26, 0.38, d, this.metal, { collide: false, shadow: false, ray: false });
+      }
+      for (let bz = -d / 2 + 6; bz < d / 2; bz += 12) {
+        this.box(x, y - 0.58, z + bz, w, 0.22, 0.22, this.rust, { collide: false, shadow: false, ray: false });
+      }
+    }
+  }
+
+  buildRack(x, z, w, d, h, rotY = 0) {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = rotY;
+    for (const sx of [-w / 2, w / 2]) {
+      for (const sz of [-d / 2, d / 2]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.11, h, 0.11), this.metalDark);
+        post.position.set(sx, h / 2, sz);
+        post.castShadow = true;
+        g.add(post);
+      }
+    }
+    const levels = Math.max(2, Math.floor(h / 1.4));
+    for (let i = 1; i <= levels; i++) {
+      const shelf = new THREE.Mesh(new THREE.BoxGeometry(w, 0.08, d), this.metal);
+      shelf.position.y = (h / levels) * i;
+      shelf.castShadow = true;
+      g.add(shelf);
+      for (let k = -1; k <= 1; k++) {
+        const box = new THREE.Mesh(new THREE.BoxGeometry(w * 0.22, 0.55, d * 0.55), this.containerMats[(i + k + 5) % this.containerMats.length]);
+        box.position.set(k * w * 0.28, (h / levels) * i + 0.32, 0);
+        box.castShadow = true;
+        g.add(box);
+      }
+    }
+    this.scene.add(g);
+    this.addCollider(x, 0, z, Math.abs(w * Math.cos(rotY)) + Math.abs(d * Math.sin(rotY)), h, Math.abs(w * Math.sin(rotY)) + Math.abs(d * Math.cos(rotY)), 'rack');
+    return g;
+  }
+
+  buildForklift(x, z, rotY = 0) {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = rotY;
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.2, 2.4), this.metal);
+    body.position.y = 0.95; body.castShadow = true; g.add(body);
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.45, 1.1, 1.2), this.metalDark);
+    cab.position.set(0, 1.85, -0.3); cab.castShadow = true; g.add(cab);
+    for (const sx of [-0.55, 0.55]) {
+      const mast = new THREE.Mesh(new THREE.BoxGeometry(0.12, 3.0, 0.12), this.metalDark);
+      mast.position.set(sx, 1.8, 1.1); g.add(mast);
+    }
+    for (const sx of [-0.38, 0.38]) {
+      const fork = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.08, 2.0), this.rust);
+      fork.position.set(sx, 0.3, 1.6); g.add(fork);
+    }
+    for (const sx of [-0.8, 0.8]) {
+      for (const sz of [-0.7, 0.7]) {
+        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.22, 14), this.metalDark);
+        wheel.rotation.z = Math.PI / 2;
+        wheel.position.set(sx, 0.36, sz);
+        g.add(wheel);
+      }
+    }
+    const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), this.glowAmber || this.glowWarm);
+    beacon.position.set(0, 2.5, -0.25); g.add(beacon);
+    this.scene.add(g);
+    this.addCollider(x, 0, z, 2.1, 2.6, 3.0, 'prop');
+    return g;
+  }
+
+  buildDesk(x, z, rotY = 0, labels = ['控制', '监控']) {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = rotY;
+    const top = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.12, 1.05), this.metalDark);
+    top.position.y = 1.05; top.castShadow = true; g.add(top);
+    for (const sx of [-1.2, 1.2]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.0, 0.8), this.metal);
+      leg.position.set(sx, 0.5, 0); g.add(leg);
+    }
+    for (let i = 0; i < 2; i++) {
+      const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.56), new THREE.MeshBasicMaterial({
+        map: screenTexture(labels[i] || '监控', i === 0 ? '#6eeeff' : '#ffb45c'), toneMapped: false,
+      }));
+      screen.position.set(-0.55 + i * 1.1, 1.55, 0.15);
+      screen.rotation.x = -0.12;
+      g.add(screen);
+      const back = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.62, 0.08), this.metalDark);
+      back.position.set(-0.55 + i * 1.1, 1.55, 0.1); g.add(back);
+    }
+    const chair = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.55, 0.55), this.metalDark);
+    chair.position.set(0, 0.35, -0.9); g.add(chair);
+    this.scene.add(g);
+    this.addCollider(x, 0, z, 3.0, 1.3, 1.3, 'prop');
+    return g;
+  }
+
+  buildServerRack(x, z, rotY = 0) {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = rotY;
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.45, 0.85), new THREE.MeshStandardMaterial({
+      color: 0x151e21, roughness: 0.48, metalness: 0.72,
+    }));
+    cab.position.y = 1.25; cab.castShadow = true; g.add(cab);
+    const lights = [];
+    for (let row = 0; row < 6; row++) {
+      for (let col = 0; col < 3; col++) {
+        const led = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.035, 0.03), col === 1 ? this.ledCyan : this.ledGreen);
+        led.position.set(-0.34 + col * 0.34, 0.58 + row * 0.3, 0.44);
+        g.add(led); lights.push(led);
+      }
+    }
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.25), new THREE.MeshBasicMaterial({
+      map: screenTexture('数据', '#62e8ff'), toneMapped: false,
+    }));
+    screen.position.set(0, 2.28, 0.44); g.add(screen);
+    this.scene.add(g);
+    this.addCollider(x, 0, z, 1.35, 2.5, 1.0, 'prop');
+    return g;
+  }
+
+  addCeilingFixture(x, y, z, color, { light = false, intensity = 65, range = 15, cone = true, length = 7 } = {}) {
+    const shade = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.16, 0.6), this.metalDark);
+    shade.position.set(x, y, z);
+    this.scene.add(shade);
+    const panel = new THREE.Mesh(new THREE.PlaneGeometry(1.55, 0.38), this.glowWarm);
+    panel.rotation.x = Math.PI / 2;
+    panel.position.set(x, y - 0.1, z);
+    this.scene.add(panel);
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowSpriteTexture('rgba(255,190,120,1)'), color, transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, opacity: 0.55,
+    }));
+    glow.position.set(x, y - 0.2, z);
+    glow.scale.set(2.8, 2.8, 1);
+    this.scene.add(glow);
+    if (light) {
+      const p = new THREE.PointLight(color, intensity, range, 2);
+      p.position.set(x, y - 0.55, z);
+      this.scene.add(p);
+      this.lampLights.push({ light: p, base: intensity, phase: Math.random() * 10, broken: false });
+    }
+    if (cone) this.cones.push(addCone(this.scene, new THREE.Vector3(x, y - 0.2, z), new THREE.Vector3(x, 0, z), length, color, 0.035));
+  }
 
   buildVariantArchitecture() {
     const lv = this.level || {};
@@ -1058,6 +1239,13 @@ export class World {
       this.box(-6.4, 3.0, 24, 0.28, 6, 0.28, this.metalDark, { tag: 'wall' });
       this.box(6.4, 3.0, 24, 0.28, 6, 0.28, this.metalDark, { tag: 'wall' });
       this.box(0, 6.1, 24, 13.2, 0.35, 0.35, this.metalDark, { collide: false });
+      // covered loading canopy: a semi-interior dry pocket in the container maze
+      this.buildCeiling(-26.5, 16, 17, 12, 5.2, this.metalDark, { beams: true });
+      this.dryAreas.push([-35, 10, -18, 22]);
+      for (const [x, z] of [[-35, 10], [-18, 10], [-35, 22], [-18, 22]]) {
+        this.box(x, 2.6, z, 0.28, 5.2, 0.28, this.metalDark, { tag: 'wall' });
+      }
+      this.addCeilingFixture(-26, 4.85, 16, 0xffb36b, { light: true, intensity: 52, range: 14, length: 4.4 });
     }
 
     if (lv.key === 'substation') {
@@ -1102,9 +1290,32 @@ export class World {
         this.scene.add(beacon);
         this.cityLights.push({ sprite: beacon, phase: Math.random() * 5, speed: 0.8 });
       }
-      // control shed
+      // satellite control shed
       this.box(29, 2.0, -25, 8, 4, 6, this.concrete, { tag: 'building' });
       this.box(29, 4.1, -25, 8.5, 0.3, 6.5, this.metalDark, { collide: false });
+      // main control room: a real interior between the yard and the north gate
+      const roomH = 4.2, roomMinX = -7.5, roomMaxX = 7.5, roomMinZ = -27, roomMaxZ = -15;
+      this.buildIndoorFloor(0, -21, 15, 12, { color: 0x3c403d, roughness: 0.46, metalness: 0.2 });
+      this.buildCeiling(0, -21, 15, 12, roomH, this.metalDark, { beams: true });
+      this.box(roomMinX, roomH / 2, -21, 0.32, roomH, 12, this.concrete, { tag: 'wall' });
+      this.box(roomMaxX, roomH / 2, -21, 0.32, roomH, 12, this.concrete, { tag: 'wall' });
+      for (const z of [roomMinZ, roomMaxZ]) {
+        this.box(-4.65, roomH / 2, z, 5.7, roomH, 0.32, this.concrete, { tag: 'wall' });
+        this.box(4.65, roomH / 2, z, 5.7, roomH, 0.32, this.concrete, { tag: 'wall' });
+        this.box(0, 3.7, z, 3.6, 1.0, 0.32, this.concrete, { tag: 'wall' });
+        this.addDoor(0, z, 3.6, 'x', 3.2, z === roomMaxZ ? '主控室南门' : '主控室北门');
+      }
+      for (const sx of [-6.7, 6.7]) {
+        for (const z of [-24.4, -22.2, -20.0, -17.8]) {
+          this.box(sx, 1.4, z, 0.45, 2.8, 1.2, this.metalDark, { tag: 'cover' });
+          const strip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.7, 0.05), this.glowCyan);
+          strip.position.set(sx + (sx < 0 ? 0.24 : -0.24), 1.5, z);
+          this.scene.add(strip);
+        }
+      }
+      this.buildDesk(-4.1, -24.2, 0, ['主控', '电网']);
+      this.addCeilingFixture(0, roomH - 0.2, -21, 0x9fe9ff, { light: true, intensity: 55, range: 12, cone: true, length: 4.2 });
+      this.dryAreas.push([roomMinX, roomMinZ, roomMaxX, roomMaxZ]);
       // cable raceways
       for (const x of [-17, 17]) {
         this.box(x, 0.1, 0, 0.45, 0.16, 44, this.metalDark, { collide: false });
@@ -1112,6 +1323,21 @@ export class World {
     }
 
     if (lv.key === 'foundry') {
+      // full indoor foundry hall
+      this.buildIndoorFloor(0, 0, 70, 70, { color: 0x39332d, roughness: 0.5, metalness: 0.2 });
+      this.buildCeiling(0, 0, 72, 72, 9.2, this.metalDark, { beams: true });
+      // ventilation fans in the roof
+      for (const [x, z] of [[-22, 12], [22, -10], [0, -26]]) {
+        const fan = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.7, 0.35, 18), this.metalDark);
+        fan.position.set(x, 8.85, z);
+        this.scene.add(fan);
+        for (let i = 0; i < 4; i++) {
+          const blade = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.05, 0.25), this.rust);
+          blade.rotation.y = i * Math.PI / 2;
+          blade.position.set(x, 8.62, z);
+          this.scene.add(blade);
+        }
+      }
       // main furnace
       const furnaceBase = new THREE.Mesh(new THREE.CylinderGeometry(5.2, 5.6, 1.2, 32), this.metalDark);
       furnaceBase.position.set(0, 0.6, -4);
@@ -1124,47 +1350,79 @@ export class World {
       const core = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.1, 3.2, 24), this.glowWarm);
       core.position.set(0, 3.2, -4);
       this.scene.add(core);
-      const chimney = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.5, 12, 16), this.metalDark);
-      chimney.position.set(0, 12.8, -7.2);
+      const chimney = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.5, 8.5, 16), this.metalDark);
+      chimney.position.set(0, 11.2, -7.2);
       chimney.castShadow = true;
       this.scene.add(chimney);
-      for (const y of [8.2, 11.5]) {
+      for (const y of [8.2, 9.1]) {
         const ring = new THREE.Mesh(new THREE.TorusGeometry(1.35, 0.06, 5, 24), this.rust);
         ring.rotation.x = Math.PI / 2;
         ring.position.set(0, y, -7.2);
         this.scene.add(ring);
       }
       this.addCollider(0, 0, -4, 10.4, 7.8, 10.4, 'building');
-      // foundry canopy
-      this.box(0, 9.8, -4, 36, 0.5, 25, this.metalDark, { collide: false, shadow: true });
-      for (const x of [-16, 16]) {
-        for (const z of [-14, 6]) {
-          this.box(x, 4.7, z, 0.55, 9.4, 0.55, this.metalDark, { tag: 'wall' });
-        }
+      // catwalk ring (visual overhead layer, no traversal)
+      const catwalk = new THREE.Mesh(new THREE.RingGeometry(5.8, 7.2, 40), this.metal);
+      catwalk.rotation.x = -Math.PI / 2;
+      catwalk.position.set(0, 4.9, -4);
+      catwalk.receiveShadow = true;
+      this.scene.add(catwalk);
+      for (let i = 0; i < 12; i++) {
+        const a = i / 12 * Math.PI * 2;
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.0, 0.07), this.metalDark);
+        rail.position.set(Math.cos(a) * 7.0, 5.4, -4 + Math.sin(a) * 7.0);
+        this.scene.add(rail);
       }
-      // overhead crane rail
-      this.box(0, 8.5, -4, 35, 0.3, 0.5, this.metalDark, { collide: false });
-      this.box(0, 8.2, 2, 0.25, 0.6, 22, this.metalDark, { collide: false });
+      const craneRail = new THREE.Mesh(new THREE.BoxGeometry(34, 0.35, 0.5), this.metalDark);
+      craneRail.position.set(0, 8.2, 2);
+      this.scene.add(craneRail);
+      const hookCable = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 4.0, 5), this.metalDark);
+      hookCable.position.set(-6, 6.0, 2);
+      this.scene.add(hookCable);
+      const hook = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.07, 5, 14, Math.PI), this.metal);
+      hook.position.set(-6, 3.9, 2);
+      this.scene.add(hook);
       // molten channels
       for (const [x, z, w, d] of [[-9, -4, 7, 0.55], [9, -4, 7, 0.55], [0, 5.5, 0.55, 9]]) {
         const molten = new THREE.Mesh(new THREE.PlaneGeometry(w, d), this.glowWarm);
         molten.rotation.x = -Math.PI / 2;
-        molten.position.set(x, 0.025, z);
+        molten.position.set(x, 0.04, z);
         this.scene.add(molten);
       }
       // side exhaust pipes
       for (const x of [-23, 23]) {
         for (let i = 0; i < 3; i++) {
-          const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 8, 8), this.rust);
-          pipe.position.set(x + i * 0.3, 4, 9);
+          const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 7.5, 8), this.rust);
+          pipe.position.set(x + i * 0.3, 4.0, 9);
           pipe.castShadow = true;
           this.scene.add(pipe);
         }
       }
+      // west control room
+      const roomH = 3.8, minX = -28, maxX = -14, minZ = -20, maxZ = -10;
+      this.buildIndoorFloor((minX + maxX) / 2, (minZ + maxZ) / 2, maxX - minX, maxZ - minZ, { color: 0x3e3831, roughness: 0.52 });
+      this.buildCeiling((minX + maxX) / 2, (minZ + maxZ) / 2, maxX - minX, maxZ - minZ, roomH, this.metalDark, { beams: false });
+      this.box(minX, roomH / 2, -15, 0.32, roomH, 10, this.concrete, { tag: 'wall' });
+      this.box((minX + maxX) / 2, roomH / 2, minZ, 14, roomH, 0.32, this.concrete, { tag: 'wall' });
+      this.box((minX + maxX) / 2, roomH / 2, maxZ, 14, roomH, 0.32, this.concrete, { tag: 'wall' });
+      this.box(maxX, roomH / 2, -18.3, 0.32, roomH, 3.4, this.concrete, { tag: 'wall' });
+      this.box(maxX, roomH / 2, -11.7, 0.32, roomH, 3.4, this.concrete, { tag: 'wall' });
+      this.box(maxX, 3.4, -15, 0.32, 0.8, 3.2, this.concrete, { tag: 'wall' });
+      this.addDoor(maxX, -15, 3.2, 'z', 3.0, '铸造控制室门');
+      this.buildDesk(-23.5, -18.0, 0, ['炉温', '阀门']);
+      this.buildServerRack(-26.0, -12.2, 0);
+      for (const z of [-18.2, -15.8, -13.4, -11.0]) {
+        this.box(-27.2, 1.4, z, 0.55, 2.8, 1.2, this.metalDark, { tag: 'cover' });
+      }
+      this.addCeilingFixture(-21, roomH - 0.2, -15, 0xffb06a, { light: true, intensity: 26, range: 9, length: 3.8 });
+      // furnace-side heat glow
+      const heat = new THREE.PointLight(0xff5a1e, 55, 16, 2);
+      heat.position.set(0, 4.2, -4);
+      this.scene.add(heat);
     }
 
     if (lv.key === 'docks') {
-      // water to the east of the quay
+      // water and quay remain outside the east loading bays
       this.quayX = 20.5;
       this.box(20.5, 0.45, 0, 1.0, 0.9, 70, this.concrete, { tag: 'wall' });
       const waterMat = new THREE.MeshStandardMaterial({
@@ -1178,15 +1436,73 @@ export class World {
       water.position.set(28, 0.035, 0);
       water.receiveShadow = false;
       this.scene.add(water);
-      // bollards along the quay
+      // warehouse shell
+      this.buildIndoorFloor(-8, -4, 54, 52, { color: 0x3b3e3a, roughness: 0.44, metalness: 0.24 });
+      this.buildCeiling(-8, -4, 54, 52, 8.8, this.metalDark, { beams: true });
+      this.dryAreas.push([-35, -30, 19, 22]);
+      // south wall with a large roll-up door
+      this.box(-20, 4.4, 22, 30, 8.8, 0.35, this.concrete, { tag: 'wall' });
+      this.box(12, 4.4, 22, 14, 8.8, 0.35, this.concrete, { tag: 'wall' });
+      this.box(0, 6.65, 22, 10, 4.3, 0.35, this.concrete, { tag: 'wall' });
+      this.addDoor(0, 22, 10, 'x', 4.5, '仓库卷帘门');
+      // east loading-bay wall
+      this.box(19, 4.4, -26, 0.35, 8.8, 8, this.concrete, { tag: 'wall' });
+      this.box(19, 4.4, -10, 0.35, 8.8, 12, this.concrete, { tag: 'wall' });
+      this.box(19, 4.4, 12, 0.35, 8.8, 20, this.concrete, { tag: 'wall' });
+      for (const z of [-19, -1]) {
+        this.box(19, 6.9, z, 0.35, 3.8, 6, this.concrete, { tag: 'wall' });
+        for (const sz of [-3, 3]) {
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.22, 5.0, 0.35), this.metalDark);
+          post.position.set(18.8, 2.5, z + sz);
+          this.scene.add(post);
+        }
+        const top = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.3, 6.0), this.hazard);
+        top.position.set(18.8, 5.0, z);
+        this.scene.add(top);
+      }
+      // loading canopy over the narrow quay strip
+      this.buildCeiling(20.1, -7, 2.2, 34, 5.4, this.metalDark, { beams: false });
+      this.dryAreas.push([19, -24, 21.2, 10]);
+      for (const z of [-24, 10]) {
+        this.box(20.9, 2.7, z, 0.18, 5.4, 0.18, this.metalDark, { tag: 'wall' });
+      }
+      // west office, entered from the warehouse floor
+      const rMinX = -34, rMaxX = -24, rMinZ = 6, rMaxZ = 16, rH = 3.6;
+      this.buildIndoorFloor(-29, 11, 10, 10, { color: 0x3d3a33, roughness: 0.52 });
+      this.buildCeiling(-29, 11, 10, 10, rH, this.metalDark, { beams: false });
+      this.box(rMinX, rH / 2, 11, 0.32, rH, 10, this.concrete, { tag: 'wall' });
+      this.box(-29, rH / 2, rMinZ, 10, rH, 0.32, this.concrete, { tag: 'wall' });
+      this.box(-29, rH / 2, rMaxZ, 10, rH, 0.32, this.concrete, { tag: 'wall' });
+      this.box(rMaxX, rH / 2, 7.75, 0.32, rH, 3.5, this.concrete, { tag: 'wall' });
+      this.box(rMaxX, rH / 2, 14.25, 0.32, rH, 3.5, this.concrete, { tag: 'wall' });
+      this.box(rMaxX, 3.2, 11, 0.32, 0.8, 3.0, this.concrete, { tag: 'wall' });
+      this.addDoor(rMaxX, 11, 3.0, 'z', 2.8, '仓库办公室门');
+      this.buildDesk(-30.5, 14, 0, ['库存', '调度']);
+      this.buildServerRack(-32.4, 8.4, 0);
+      this.addCeilingFixture(-29, rH - 0.2, 11, 0x9fffd9, { light: true, intensity: 58, range: 9, length: 3.5 });
+      // racks, pallets and a forklift inside
+      this.buildRack(-32.2, -12, 2.4, 12, 6.0, 0);
+      this.buildRack(-20, 18.5, 10, 2.2, 5.4, 0);
+      this.buildRack(-10, 10, 2.2, 10, 5.6, Math.PI / 2);
+      this.buildForklift(11, 6.2, -0.4);
+      for (const [x, z] of [[-17, 2], [-16.5, 3.4], [8, -16], [9.4, -16.6], [4, 8]]) {
+        this.box(x, 0.3, z, 1.6, 0.6, 1.2, this.metalDark, { tag: 'cover' });
+        this.box(x, 0.95, z, 1.3, 0.65, 1.0, this.containerMats[(x + z + 10) % this.containerMats.length], { tag: 'cover' });
+      }
+      // bay floor markings
+      for (const z of [-19, -1]) {
+        const mark = new THREE.Mesh(new THREE.PlaneGeometry(5.0, 0.22), this.hazard);
+        mark.rotation.x = -Math.PI / 2;
+        mark.position.set(16.2, 0.03, z);
+        this.scene.add(mark);
+      }
+      // bollards and harbour cranes (outside)
       for (let z = -28; z <= 28; z += 7) {
         const b = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 0.8, 10), this.metalDark);
-        b.position.set(19.35, 0.4, z);
+        b.position.set(20.15, 0.4, z);
         b.castShadow = true;
         this.scene.add(b);
-        this.addCollider(19.35, 0, z, 0.55, 0.8, 0.55, 'prop');
       }
-      // harbour cranes
       for (const [x, z] of [[24, -14], [24, 10]]) {
         for (const sx of [-1.2, 1.2]) {
           for (const sz of [-1.2, 1.2]) {
@@ -1198,7 +1514,7 @@ export class World {
         const boom = new THREE.Mesh(new THREE.BoxGeometry(20, 0.55, 0.7), this.metalDark);
         boom.position.set(x - 8, 16.5, z);
         this.scene.add(boom);
-        const cabin = new THREE.Mesh(new THREE.BoxGeometry(2, 1.8, 2), this.glass || this.metal);
+        const cabin = new THREE.Mesh(new THREE.BoxGeometry(2, 1.8, 2), this.metal);
         cabin.position.set(x - 2, 15.4, z);
         this.scene.add(cabin);
         const beacon = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -1209,42 +1525,31 @@ export class World {
         beacon.scale.set(0.9, 0.9, 1);
         this.scene.add(beacon);
       }
-      // dock office
-      this.box(-29, 2.3, -22, 9, 4.6, 7, this.concrete, { tag: 'building' });
-      this.box(-29, 4.8, -22, 9.6, 0.3, 7.6, this.metalDark, { collide: false });
+      // ceiling skylights glow faintly through the storm-lit roof
+      for (const [x, z] of [[-18, -20], [0, -20], [12, -20], [-18, 12], [0, 12]]) {
+        const sky = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 1.5), this.glowCyan);
+        sky.rotation.x = Math.PI / 2;
+        sky.position.set(x, 8.55, z);
+        this.scene.add(sky);
+      }
     }
 
     if (lv.key === 'tower') {
-      // central communications tower
+      // tower interior: lobby, server rooms and a north core room
+      this.buildIndoorFloor(0, 0, 70, 70, { color: 0x363b3d, roughness: 0.34, metalness: 0.3 });
+      this.buildCeiling(0, 0, 72, 72, 9.4, this.metalDark, { beams: true });
+      // central communications core
       this.box(0, 10.8, -3, 12, 21.6, 12, this.darkConcrete, { tag: 'building' });
       this.box(0, 22.2, -3, 13, 0.6, 13, this.metalDark, { collide: false });
-      // ribs and service bands
       for (const y of [4, 9, 14, 19]) {
         this.box(0, y, 3.06, 12.3, 0.28, 0.3, this.metal, { collide: false });
       }
       for (const [x, z] of [[-5.8, 3], [5.8, 3], [-5.8, -9], [5.8, -9]]) {
         this.box(x, 12, z, 0.35, 24, 0.35, this.metalDark, { collide: false });
       }
-      // antenna mast and dishes
       const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.8, 12, 8), this.metalDark);
       mast.position.set(0, 28.5, -3);
       this.scene.add(mast);
-      for (const [x, y] of [[0, 24.5], [0, 30.5], [0, 34.5]]) {
-        const dish = new THREE.Mesh(new THREE.SphereGeometry(2.2, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), this.metal);
-        dish.scale.y = 0.25;
-        dish.position.set(x + 2.4, y, -3);
-        dish.rotation.z = -0.5;
-        this.scene.add(dish);
-      }
-      // parapets / cable anchors (center stays open for the extraction route)
-      for (const [x, z, w, d] of [[-23, 3, 1.2, 20], [23, 3, 1.2, 20], [-10, -20, 8, 1.2], [10, -20, 8, 1.2]]) {
-        this.box(x, 0.7, z, w, 1.4, d, this.concrete, { tag: 'cover' });
-      }
-      // generator blocks
-      for (const [x, z] of [[-18, -12], [18, -12]]) {
-        this.box(x, 1.2, z, 4.5, 2.4, 3.2, this.metalDark, { tag: 'building' });
-        this.box(x, 2.55, z, 4.7, 0.25, 3.4, this.metal, { collide: false });
-      }
       // tower identity panel and vertical warning strips
       const towerTex = this.makeTextSignTexture('06 中继塔', '通信重地 // 授权人员除外', '#ff4052', 900, 160);
       const towerMat = new THREE.MeshStandardMaterial({
@@ -1255,9 +1560,66 @@ export class World {
       towerSign.position.set(0, 7.0, 3.12);
       this.scene.add(towerSign);
       for (const x of [-5.9, 5.9]) {
-        const strip = new THREE.Mesh(new THREE.BoxGeometry(0.06, 5.5, 0.06), this.glowRed);
+        const strip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 6.0, 0.08), this.glowRed);
         strip.position.set(x, 4.2, 3.1);
         this.scene.add(strip);
+      }
+      // reception and lobby seating
+      this.buildDesk(0, 12, 0, ['访客登记', '楼层导览']);
+      this.box(-4, 0.35, 14, 2.0, 0.7, 1.0, this.metalDark, { tag: 'cover' });
+      this.box(4, 0.35, 14, 2.0, 0.7, 1.0, this.metalDark, { tag: 'cover' });
+      // west server room
+      const roomH = 4.4, wMinX = -32, wMaxX = -14, wMinZ = -20, wMaxZ = -4;
+      this.buildIndoorFloor(-23, -12, 18, 16, { color: 0x343c40, roughness: 0.38, metalness: 0.28 });
+      this.buildCeiling(-23, -12, 18, 16, roomH, this.metalDark, { beams: false });
+      this.box(wMinX, roomH / 2, -12, 0.3, roomH, 16, this.concrete, { tag: 'wall' });
+      this.box(-23, roomH / 2, wMinZ, 18, roomH, 0.3, this.concrete, { tag: 'wall' });
+      this.box(-23, roomH / 2, wMaxZ, 18, roomH, 0.3, this.concrete, { tag: 'wall' });
+      this.box(wMaxX, roomH / 2, -16.8, 0.3, roomH, 6.4, this.concrete, { tag: 'wall' });
+      this.box(wMaxX, roomH / 2, -7.2, 0.3, roomH, 6.4, this.concrete, { tag: 'wall' });
+      this.box(wMaxX, 3.5, -12, 0.3, 1.4, 3.2, this.concrete, { tag: 'wall' });
+      this.addDoor(wMaxX, -12, 3.2, 'z', 3.0, '西机房防火门');
+      this.buildServerRack(-30.8, -16.6, 0);
+      this.buildServerRack(-30.8, -12.6, 0);
+      this.buildServerRack(-30.8, -8.6, 0);
+      this.buildDesk(-20, -17.5, 0, ['机房环境', '链路状态']);
+      // east control room
+      const eMinX = 14, eMaxX = 32;
+      this.buildIndoorFloor(23, -12, 18, 16, { color: 0x363c3d, roughness: 0.38, metalness: 0.28 });
+      this.buildCeiling(23, -12, 18, 16, roomH, this.metalDark, { beams: false });
+      this.box(eMaxX, roomH / 2, -12, 0.3, roomH, 16, this.concrete, { tag: 'wall' });
+      this.box(23, roomH / 2, wMinZ, 18, roomH, 0.3, this.concrete, { tag: 'wall' });
+      this.box(23, roomH / 2, wMaxZ, 18, roomH, 0.3, this.concrete, { tag: 'wall' });
+      this.box(eMinX, roomH / 2, -16.8, 0.3, roomH, 6.4, this.concrete, { tag: 'wall' });
+      this.box(eMinX, roomH / 2, -7.2, 0.3, roomH, 6.4, this.concrete, { tag: 'wall' });
+      this.box(eMinX, 3.5, -12, 0.3, 1.4, 3.2, this.concrete, { tag: 'wall' });
+      this.addDoor(eMinX, -12, 3.2, 'z', 3.0, '东控制室防火门');
+      this.buildDesk(24, -17.5, Math.PI, ['中继', '安防']);
+      this.buildServerRack(30.5, -7, Math.PI);
+      // north core room, with doors south and north
+      const nMinX = -9, nMaxX = 9, nMinZ = -28, nMaxZ = -17;
+      this.buildIndoorFloor(0, -22.5, 18, 11, { color: 0x3a3b38, roughness: 0.4, metalness: 0.24 });
+      this.buildCeiling(0, -22.5, 18, 11, roomH, this.metalDark, { beams: false });
+      this.box(nMinX, roomH / 2, -22.5, 0.3, roomH, 11, this.concrete, { tag: 'wall' });
+      this.box(nMaxX, roomH / 2, -22.5, 0.3, roomH, 11, this.concrete, { tag: 'wall' });
+      for (const z of [nMaxZ, nMinZ]) {
+        this.box(-5.35, roomH / 2, z, 7.3, roomH, 0.3, this.concrete, { tag: 'wall' });
+        this.box(5.35, roomH / 2, z, 7.3, roomH, 0.3, this.concrete, { tag: 'wall' });
+        this.box(0, 3.7, z, 3.4, 1.4, 0.3, this.concrete, { tag: 'wall' });
+        this.addDoor(0, z, 3.4, 'x', 3.0, z === nMaxZ ? '核心机房南门' : '核心机房北门');
+      }
+      this.buildServerRack(-7.4, -19.2, 0);
+      this.buildServerRack(7.4, -25.8, 0);
+      // red emergency strips and cable trays
+      for (const x of [-10, 10]) {
+        const strip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 30), this.stripRed);
+        strip.position.set(x, 0.04, 2);
+        this.scene.add(strip);
+      }
+      for (const z of [-10, 6]) {
+        const tray = new THREE.Mesh(new THREE.BoxGeometry(30, 0.18, 0.4), this.metalDark);
+        tray.position.set(0, 6.9, z);
+        this.scene.add(tray);
       }
     }
   }
@@ -1293,8 +1655,83 @@ export class World {
     }
   }
 
+  buildIndoorLighting() {
+    const lv = this.level || {};
+    const gateLight = new THREE.PointLight(0x58ffb0, 30, 16, 2);
+    gateLight.position.set(0, 5.6, -29);
+    this.scene.add(gateLight);
+    this.gateLight = gateLight;
+
+    if (lv.key === 'foundry') {
+      const main = [
+        [-18, 8.85, 8, 0xffa25c, true, 125],
+        [18, 8.85, -8, 0xffa25c, true, 118],
+        [0, 8.85, 18, 0xffc27a, true, 110],
+        [0, 8.85, -24, 0xff8a4a, false, 0],
+      ];
+      for (const [x, y, z, color, light, intensity] of main) {
+        this.addCeilingFixture(x, y, z, color, { light, intensity, range: 22, length: 8.0 });
+      }
+      const accent = new THREE.PointLight(0xff5a1e, 42, 16, 2);
+      accent.position.set(0, 5.5, -4);
+      this.scene.add(accent);
+      this.animLights.push({ light: accent, base: 42, phase: 0.7, speed: 0.8 });
+    } else if (lv.key === 'tower') {
+      const main = [
+        [0, 8.9, 18, 0xd8eaff, true, 110],
+        [0, 8.9, -12, 0xbfe2ff, true, 100],
+        [-23, 4.15, -12, 0xbfe2ff, true, 82],
+        [23, 4.15, -12, 0xbfe2ff, true, 82],
+        [0, 4.15, -22.5, 0xffb1a0, false, 0],
+      ];
+      for (const [x, y, z, color, light, intensity] of main) {
+        this.addCeilingFixture(x, y, z, color, { light, intensity, range: 16, length: y > 6 ? 7.0 : 3.6 });
+      }
+      const emergency = new THREE.PointLight(0xff3040, 28, 14, 2);
+      emergency.position.set(0, 5.5, -18);
+      this.scene.add(emergency);
+      this.animLights.push({ light: emergency, base: 28, phase: 1.7, speed: 0.55 });
+    }
+  }
+
+  buildWarehouseLighting() {
+    const lv = this.level || {};
+    const gateLight = new THREE.PointLight(0x58ffb0, 30, 16, 2);
+    gateLight.position.set(0, 5.6, -29);
+    this.scene.add(gateLight);
+    this.gateLight = gateLight;
+
+    const lamps = [
+      [-18, 8.55, 4, 0xc8fff0, true, 125],
+      [4, 8.55, -10, 0xa6ffd9, true, 112],
+      [0, 8.55, 16, 0xd8fff4, true, 108],
+      [12, 8.55, 14, 0xb8fff0, false, 0],
+    ];
+    for (const [x, y, z, color, light, intensity] of lamps) {
+      this.addCeilingFixture(x, y, z, color, { light, intensity, range: 22, length: 7.5 });
+    }
+    // exterior dock lamps, visible through the loading bays
+    for (const [idx, [x, z]] of [[20.1, 8], [20.1, -20]].entries()) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.11, 5.4, 8), this.metalDark);
+      pole.position.set(x, 2.7, z);
+      this.scene.add(pole);
+      if (idx === 0) {
+        const light = new THREE.PointLight(0x64ffd0, 45, 13, 2);
+        light.position.set(x - 0.2, 5.2, z);
+        this.scene.add(light);
+      }
+      this.cones.push(addCone(this.scene, new THREE.Vector3(x - 0.2, 5.2, z), new THREE.Vector3(x - 0.2, 0, z), 4.0, 0x64ffd0, 0.04));
+    }
+    const accent = new THREE.PointLight(0x42ffbf, 0, 18, 2);
+    accent.position.set(12, 2.5, -20);
+    this.scene.add(accent);
+    this.animLights.push({ light: accent, base: 0, phase: 1.1, speed: 0.45 });
+  }
+
   buildVariantLighting() {
     const lv = this.level || {};
+    if (lv.lightingStyle === 'indoor') { this.buildIndoorLighting(); return; }
+    if (lv.lightingStyle === 'warehouse') { this.buildWarehouseLighting(); return; }
     const lampColor = lv.lampColor ?? 0xffb36b;
     const accentColor = lv.accentColor ?? 0xff4fa3;
 
@@ -1366,19 +1803,20 @@ export class World {
   buildVariantSignage() {
     const lv = this.level || {};
     const accent = lv.neon?.color || '#ffb45c';
+    const signZ = lv.signZ ?? 20.5;
     // south checkpoint gantry with the level name
-    this.box(-6.4, 3.0, 20.5, 0.3, 6, 0.3, this.metalDark, { tag: 'wall' });
-    this.box(6.4, 3.0, 20.5, 0.3, 6, 0.3, this.metalDark, { tag: 'wall' });
-    this.box(0, 6.15, 20.5, 13.2, 0.35, 0.35, this.metalDark, { collide: false });
+    this.box(-6.4, 3.0, signZ, 0.3, 6, 0.3, this.metalDark, { tag: 'wall' });
+    this.box(6.4, 3.0, signZ, 0.3, 6, 0.3, this.metalDark, { tag: 'wall' });
+    this.box(0, 6.15, signZ, 13.2, 0.35, 0.35, this.metalDark, { collide: false });
     const tex = this.makeTextSignTexture(lv.name || '夜幕协议', `${lv.area || ''} // 撤离行动`, accent, 900, 160);
     const mat = new THREE.MeshStandardMaterial({
       map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 1.7,
       color: 0x050505, transparent: true, side: THREE.DoubleSide,
     });
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(8.4, 1.45), mat);
-    sign.position.set(0, 5.45, 20.32);
+    sign.position.set(0, 5.45, signZ - 0.18);
     this.scene.add(sign);
-    this.box(0, 5.45, 20.52, 8.8, 1.65, 0.16, this.metalDark, { collide: false });
+    this.box(0, 5.45, signZ + 0.02, 8.8, 1.65, 0.16, this.metalDark, { collide: false });
 
     // neon marker on one wall
     const n = lv.neon;
@@ -1472,7 +1910,7 @@ export class World {
       { id: 'C', label: '丙', x: 0, z: -21.5, face: 0, name: '闸门继电器' },
     ]).map((r) => (r.pos ? r : { ...r, pos: new THREE.Vector3(r.x, 0, r.z) }));
     for (const d of data) {
-      const r = new Relay(this, d.id, d.label, d.pos, d.face, d.name);
+      const r = new Relay(this, d.id, d.label, d.pos, d.face, d.name, d.type || 'relay', d.verb || '覆盖');
       this.relays.push(r);
     }
   }
@@ -1670,9 +2108,11 @@ export class World {
 
     // searchlight sweep
     const a = this.time * 0.14;
-    this.searchTarget.position.set(Math.cos(a) * 22, 0, -3 + Math.sin(a) * 16);
-    this.searchPivot.lookAt(this.searchTarget.position);
-    this.searchCone.material.uniforms.uTime.value = this.time;
+    if (this.searchPivot && this.searchTarget && this.searchCone) {
+      this.searchTarget.position.set(Math.cos(a) * 22, 0, -3 + Math.sin(a) * 16);
+      this.searchPivot.lookAt(this.searchTarget.position);
+      this.searchCone.material.uniforms.uTime.value = this.time;
+    }
 
     for (const r of this.relays) r.update(dt, this.time);
     if (this.gate.isOpen) {
@@ -1691,15 +2131,19 @@ export class World {
 /* ------------------------------------------------------------------ */
 
 class Relay {
-  constructor(world, id, label, pos, face, name) {
+  constructor(world, id, label, pos, face, name, type = 'relay', verb = '覆盖') {
     this.world = world;
     this.id = id;
     this.label = label;
     this.pos = pos.clone();
     this.name = name;
+    this.type = type;
+    this.verb = verb;
     this.face = face;
     this.active = false;
     this.progress = 0;
+    const typeNames = { relay: '继电器', beacon: '信标', breaker: '断路器', valve: '阀门', console: '控制台', server: '服务器' };
+    this.typeLabel = typeNames[type] || '继电器';
     this.group = new THREE.Group();
     this.group.position.copy(pos);
     this.group.rotation.y = face;
@@ -1719,7 +2163,7 @@ class Relay {
     body.castShadow = true;
     this.group.add(body);
 
-    this.screenTex = screenTexture(`继电器 ${label}`, '#72f5d1');
+    this.screenTex = screenTexture(`${this.typeLabel} ${label}`, '#72f5d1');
     this.screen = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.55), new THREE.MeshBasicMaterial({
       map: this.screenTex, toneMapped: false, transparent: true,
     }));
@@ -1758,19 +2202,108 @@ class Relay {
     this.pool.renderOrder = 5;
     this.group.add(this.pool);
 
+    // type-specific silhouette above the common plinth
+    if (type === 'valve') {
+      const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 2.6, 10), world.rust);
+      pipe.position.set(0, 1.5, 0.72);
+      this.group.add(pipe);
+      this.wheel = new THREE.Group();
+      this.wheel.position.set(0, 1.65, 0.88);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.075, 8, 32), new THREE.MeshStandardMaterial({
+        color: 0x9d2f27, roughness: 0.55, metalness: 0.45, emissive: 0x260805, emissiveIntensity: 0.4,
+      }));
+      rim.castShadow = true;
+      this.wheel.add(rim);
+      for (let i = 0; i < 4; i++) {
+        const spoke = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.07, 0.06), world.metalDark);
+        spoke.rotation.z = i * Math.PI / 2;
+        this.wheel.add(spoke);
+      }
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.16, 10), world.metal);
+      hub.rotation.x = Math.PI / 2;
+      this.wheel.add(hub);
+      this.group.add(this.wheel);
+    } else if (type === 'breaker') {
+      const cab = new THREE.Mesh(new THREE.BoxGeometry(1.55, 2.55, 0.55), world.metalDark);
+      cab.position.set(0, 1.45, -0.5);
+      cab.castShadow = true;
+      this.group.add(cab);
+      for (const x of [-0.45, 0, 0.45]) {
+        const strip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.75, 0.06), world.glowCyan);
+        strip.position.set(x, 1.55, -0.2);
+        this.group.add(strip);
+      }
+      this.lever = new THREE.Group();
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.55, 0.08), world.metal);
+      arm.position.y = 0.25;
+      this.lever.add(arm);
+      const knob = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), world.glowRed);
+      knob.position.y = 0.55;
+      this.lever.add(knob);
+      this.lever.position.set(0.62, 1.25, 0.25);
+      this.lever.rotation.z = 0.55;
+      this.group.add(this.lever);
+    } else if (type === 'server') {
+      const rack = new THREE.Mesh(new THREE.BoxGeometry(1.35, 2.45, 0.8), new THREE.MeshStandardMaterial({
+        color: 0x1c2629, roughness: 0.55, metalness: 0.65,
+      }));
+      rack.position.set(0, 1.45, -0.55);
+      rack.castShadow = true;
+      this.group.add(rack);
+      this.leds = [];
+      for (let row = 0; row < 5; row++) {
+        for (let col = 0; col < 3; col++) {
+          const led = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.05, 0.03), col === 1 ? world.ledCyan : world.ledGreen);
+          led.position.set(-0.35 + col * 0.35, 0.7 + row * 0.37, -0.13);
+          this.group.add(led);
+          this.leds.push(led);
+        }
+      }
+    } else if (type === 'beacon') {
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.11, 3.6, 8), world.metalDark);
+      mast.position.set(0, 3.1, -0.28);
+      this.group.add(mast);
+      for (let i = 0; i < 3; i++) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.45 - i * 0.09, 0.025, 5, 24), world.glowCyan);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.set(0, 2.1 + i * 0.9, -0.28);
+        this.group.add(ring);
+      }
+      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), world.glowRed);
+      tip.position.set(0, 4.95, -0.28);
+      this.group.add(tip);
+      this.beaconTip = tip;
+    } else if (type === 'console') {
+      const desk = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.12, 0.9), world.metalDark);
+      desk.position.set(0, 0.98, 0.38);
+      this.group.add(desk);
+      for (const x of [-0.45, 0.45]) {
+        const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.4), new THREE.MeshBasicMaterial({
+          map: screenTexture(x < 0 ? '码头控制 A' : '码头控制 B', '#6eeeff'), toneMapped: false,
+        }));
+        screen.position.set(x, 1.38, 0.52);
+        screen.rotation.x = -0.18;
+        this.group.add(screen);
+      }
+      const keyboard = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.04, 0.25), world.metal);
+      keyboard.position.set(0, 1.04, 0.72);
+      this.group.add(keyboard);
+    }
+
     const markerTex = markerTexture(label, '#9bffe6');
     this.marker = new THREE.Sprite(new THREE.SpriteMaterial({
       map: markerTex, transparent: true, depthTest: false, depthWrite: false,
       blending: THREE.AdditiveBlending, toneMapped: false, opacity: 0.9,
     }));
-    this.marker.position.set(0, 3.3, 0);
+    this.markerBaseY = type === 'beacon' ? 5.35 : 3.3;
+    this.marker.position.set(0, this.markerBaseY, 0);
     this.marker.scale.set(0.72, 0.72, 1);
     this.marker.renderOrder = 50;
     this.group.add(this.marker);
 
     s.add(this.group);
     world.addCollider(pos.x, 0, pos.z, 2.1, 1.8, 1.8, 'relay');
-    this.greenScreen = screenTexture(`继电器 ${label} 在线`, '#7dffbe');
+    this.greenScreen = screenTexture(`${this.typeLabel} ${label} 在线`, '#7dffbe');
     this.interactPos = pos.clone().add(new THREE.Vector3(Math.sin(face) * 1.8, 0, Math.cos(face) * 1.8));
   }
 
@@ -1785,19 +2318,142 @@ class Relay {
     this.pool.material.opacity = 0.4;
     this.ring.material.color.setHex(0x58ffab);
     this.marker.visible = false;
+    if (this.lever) this.lever.rotation.z = -0.55;
+    if (this.leds) for (const led of this.leds) led.material = this.world.glowGreen;
+    if (this.beaconTip) this.beaconTip.material = this.world.glowGreen;
   }
 
   update(dt, t) {
     this.ring.rotation.z += dt * (this.active ? 0.35 : 1.1);
     const pulse = 0.8 + Math.sin(t * 2.4 + this.pos.x) * 0.2;
     this.ring.material.opacity = this.active ? 0.35 : pulse;
+    if (this.wheel && this.active) this.wheel.rotation.z += dt * 1.7;
     if (!this.active) {
       this.topGlow.material.emissiveIntensity = 2.4 + Math.sin(t * 5 + this.pos.z) * 0.55;
-      this.marker.position.y = 3.3 + Math.sin(t * 1.8 + this.pos.x) * 0.08;
+      this.marker.position.y = this.markerBaseY + Math.sin(t * 1.8 + this.pos.x) * 0.08;
       this.marker.material.opacity = 0.72 + Math.sin(t * 3) * 0.18;
       const cam = this.world.camera;
       const dist = cam ? cam.position.distanceTo(this.pos) : 99;
       this.marker.visible = dist > 6.5;
+      if (this.leds) {
+        for (let i = 0; i < this.leds.length; i++) {
+          this.leds[i].visible = ((Math.floor(t * 3 + i) % 4) !== 0);
+        }
+      }
+      if (this.beaconTip) this.beaconTip.material = (Math.sin(t * 4) > 0) ? this.world.glowRed : this.world.glowGreen;
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+
+class SlidingDoor {
+  constructor(world, { x, z, width, axis, height, label }) {
+    this.world = world;
+    this.x = x;
+    this.z = z;
+    this.width = width;
+    this.axis = axis;
+    this.height = height;
+    this.label = label;
+    this.amount = 0;
+    this.opened = false;
+    this.removed = false;
+    this.group = new THREE.Group();
+    this.group.position.set(x, 0, z);
+    this.world.scene.add(this.group);
+
+    const panelMat = world.metalDark;
+    const trimMat = world.metal;
+    const half = width / 2;
+    const panelW = axis === 'x' ? half : 0.18;
+    const panelD = axis === 'x' ? 0.18 : half;
+    this.left = new THREE.Mesh(new THREE.BoxGeometry(panelW, height, panelD), panelMat);
+    this.right = new THREE.Mesh(new THREE.BoxGeometry(panelW, height, panelD), panelMat);
+    this.left.castShadow = true; this.right.castShadow = true;
+    this.left.receiveShadow = true; this.right.receiveShadow = true;
+    if (axis === 'x') {
+      this.left.position.set(-width / 4, height / 2, 0);
+      this.right.position.set(width / 4, height / 2, 0);
+    } else {
+      this.left.position.set(0, height / 2, -width / 4);
+      this.right.position.set(0, height / 2, width / 4);
+    }
+    this.group.add(this.left, this.right);
+    world.rayMeshes.push(this.left, this.right);
+
+    // hazard stripe band on each panel
+    for (const [panel, sign] of [[this.left, -1], [this.right, 1]]) {
+      const stripe = new THREE.Mesh(
+        new THREE.PlaneGeometry(axis === 'x' ? width / 2 - 0.18 : 0.5, 0.22),
+        world.hazard,
+      );
+      if (axis === 'x') {
+        stripe.position.set(sign * width / 4, height * 0.42, 0.1);
+      } else {
+        stripe.rotation.y = Math.PI / 2;
+        stripe.position.set(0.1, height * 0.42, sign * width / 4);
+      }
+      this.group.add(stripe);
+    }
+
+    // frame posts and top trim
+    if (axis === 'x') {
+      for (const sx of [-half, half]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.22, height + 0.28, 0.32), trimMat);
+        post.position.set(sx, (height + 0.28) / 2, 0);
+        post.castShadow = true;
+        this.group.add(post);
+      }
+      const top = new THREE.Mesh(new THREE.BoxGeometry(width + 0.5, 0.28, 0.34), trimMat);
+      top.position.set(0, height + 0.14, 0);
+      this.group.add(top);
+    } else {
+      for (const sz of [-half, half]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.32, height + 0.28, 0.22), trimMat);
+        post.position.set(0, (height + 0.28) / 2, sz);
+        post.castShadow = true;
+        this.group.add(post);
+      }
+      const top = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.28, width + 0.5), trimMat);
+      top.position.set(0, height + 0.14, 0);
+      this.group.add(top);
+    }
+
+    this.status = new THREE.Mesh(new THREE.SphereGeometry(0.075, 8, 6), world.glowRed);
+    this.status.position.set(axis === 'x' ? width / 2 + 0.05 : -0.3, height + 0.36, axis === 'x' ? 0.2 : width / 2);
+    this.group.add(this.status);
+
+    const w = axis === 'x' ? width : 0.42;
+    const d = axis === 'x' ? 0.42 : width;
+    this.collider = world.addCollider(x, 0, z, w, height, d, 'door');
+    this.collider.door = this;
+  }
+
+  update(dt, playerPos) {
+    if (!this.opened && playerPos) {
+      const dx = playerPos.x - this.x;
+      const dz = playerPos.z - this.z;
+      if (dx * dx + dz * dz < 3.8 * 3.8) {
+        this.opened = true;
+        this.world.audio?.doorOpen?.();
+      }
+    }
+    if (!this.opened) return;
+    this.amount = Math.min(1, this.amount + dt * 1.9);
+    const e = this.amount * this.amount * (3 - 2 * this.amount);
+    if (this.axis === 'x') {
+      this.left.position.x = -this.width / 4 - (this.width / 2) * e;
+      this.right.position.x = this.width / 4 + (this.width / 2) * e;
+    } else {
+      this.left.position.z = -this.width / 4 - (this.width / 2) * e;
+      this.right.position.z = this.width / 4 + (this.width / 2) * e;
+    }
+    if (this.status) this.status.material = this.world.glowGreen;
+    if (!this.removed && this.amount > 0.55) {
+      this.removed = true;
+      this.world.colliders = this.world.colliders.filter((c) => c !== this.collider);
+      this.world.mapBoxes = this.world.mapBoxes.filter((c) => c !== this.collider);
     }
   }
 }

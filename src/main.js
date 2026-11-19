@@ -245,6 +245,8 @@ class Game {
     this.world.camera = this.camera;
     this.world.captureEnvironment();
     this.effects = new Effects(this.scene, this.camera, this.renderer, this.audio, this.lowQuality);
+    this.effects.setDryAreas(this.world.dryAreas || []);
+    this.effects.setIndoor(!!this.level.indoor, this.level.dustColor || 0xffcf9a);
     this.hud = new Hud(this.world, this.player);
     this.hud.setLevel(this.level, this.levelIndex, this.levels.length);
     this.camera.position.set(10, 6.3, 18);
@@ -1328,8 +1330,8 @@ class Game {
         this.hud.hidePrompt();
       } else {
         this.hud.setPrompt(
-          `按住 [E] —— 覆盖${relay.name}`,
-          `正在破解硬锁 // 剩余 ${(this.diff.holdTime * (1 - this.hold)).toFixed(1)} 秒`,
+          `按住 [E] —— ${relay.verb}${relay.name}`,
+          `正在执行 // 剩余 ${(this.diff.holdTime * (1 - this.hold)).toFixed(1)} 秒`,
           this.hold,
         );
       }
@@ -1441,6 +1443,7 @@ class Game {
         for (const e of this.enemies) e.update(dt, { player: this.player, enemies: this.enemies });
       }
       this.world.update(dt);
+      this.world.updateDoors(dt, this.player.position);
       const flash = this.effects.update(dt);
       this.world.setLightning(flash);
       this.hud.setFlash(flash);
@@ -1455,6 +1458,7 @@ class Game {
     for (const e of this.enemies) e.update(dt, { player: this.player, enemies: this.enemies });
 
     this.world.update(dt);
+    this.world.updateDoors(dt, this.player.position);
     const flash = this.effects.update(dt);
     this.world.setLightning(flash);
     this.hud.setFlash(flash);

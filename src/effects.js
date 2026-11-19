@@ -42,10 +42,14 @@ class Rain {
         uTime: { value: 0 },
         uCam: { value: new THREE.Vector3() },
         uOpacity: { value: 0.4 },
+        uDry: { value: [new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4()] },
+        uDryCount: { value: 0 },
       },
       vertexShader: /* glsl */`
         uniform float uTime;
         uniform vec3 uCam;
+        uniform vec4 uDry[4];
+        uniform int uDryCount;
         attribute float aSpeed;
         attribute float aEnd;
         varying float vA;
@@ -55,9 +59,16 @@ class Rain {
           p.y = fall - aEnd * (0.55 + aSpeed * 0.045);
           p.x = mod(p.x - uCam.x + 40.0, 80.0) - 40.0 + uCam.x + aEnd * 0.10;
           p.z = mod(p.z - uCam.z + 40.0, 80.0) - 40.0 + uCam.z;
+          float dry = 0.0;
+          for (int i = 0; i < 4; i++) {
+            if (i < uDryCount) {
+              vec4 r = uDry[i];
+              if (p.x > r.x && p.x < r.z && p.z > r.y && p.z < r.w) dry = 1.0;
+            }
+          }
           vec4 mv = modelViewMatrix * vec4(p, 1.0);
           float d = length(mv.xyz);
-          vA = smoothstep(0.7, 4.0, d) * (1.0 - smoothstep(20.0, 46.0, d));
+          vA = smoothstep(0.7, 4.0, d) * (1.0 - smoothstep(20.0, 46.0, d)) * (1.0 - dry);
           gl_Position = projectionMatrix * mv;
         }
       `,
@@ -76,6 +87,15 @@ class Rain {
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 10;
     scene.add(this.mesh);
+  }
+
+  setDryAreas(areas) {
+    const n = Math.min(4, areas.length);
+    for (let i = 0; i < 4; i++) {
+      const a = areas[i];
+      if (a) this.material.uniforms.uDry.value[i].set(a[0], a[1], a[2], a[3]);
+    }
+    this.material.uniforms.uDryCount.value = n;
   }
 
   update(dt, camera) {
@@ -104,10 +124,16 @@ class GroundSplashes {
     geo.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1));
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 100);
     this.mat = new THREE.ShaderMaterial({
-      uniforms: { uTime: { value: 0 }, uCam: { value: new THREE.Vector3() } },
+      uniforms: {
+        uTime: { value: 0 }, uCam: { value: new THREE.Vector3() },
+        uDry: { value: [new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4()] },
+        uDryCount: { value: 0 },
+      },
       vertexShader: /* glsl */`
         uniform float uTime;
         uniform vec3 uCam;
+        uniform vec4 uDry[4];
+        uniform int uDryCount;
         attribute float aPhase;
         varying float vLife;
         varying float vFade;
@@ -116,12 +142,19 @@ class GroundSplashes {
           vec3 p = position;
           p.x = mod(p.x - uCam.x + 32.0, 64.0) - 32.0 + uCam.x;
           p.z = mod(p.z - uCam.z + 32.0, 64.0) - 32.0 + uCam.z;
+          float dry = 0.0;
+          for (int i = 0; i < 4; i++) {
+            if (i < uDryCount) {
+              vec4 r = uDry[i];
+              if (p.x > r.x && p.x < r.z && p.z > r.y && p.z < r.w) dry = 1.0;
+            }
+          }
           vec4 mv = modelViewMatrix * vec4(p, 1.0);
           float d = length(mv.xyz);
-          gl_PointSize = mix(1.6, 9.0, t) * (5.0 / max(3.0, d));
+          gl_PointSize = mix(1.6, 9.0, t) * (5.0 / max(3.0, d)) * (1.0 - dry);
           gl_Position = projectionMatrix * mv;
           vLife = t;
-          vFade = (1.0 - smoothstep(16.0, 34.0, d)) * smoothstep(0.4, 2.0, d);
+          vFade = (1.0 - smoothstep(16.0, 34.0, d)) * smoothstep(0.4, 2.0, d) * (1.0 - dry);
         }
       `,
       fragmentShader: /* glsl */`
@@ -143,6 +176,15 @@ class GroundSplashes {
     this.mesh = new THREE.Points(geo, this.mat);
     this.mesh.frustumCulled = false;
     scene.add(this.mesh);
+  }
+
+  setDryAreas(areas) {
+    const n = Math.min(4, areas.length);
+    for (let i = 0; i < 4; i++) {
+      const a = areas[i];
+      if (a) this.mat.uniforms.uDry.value[i].set(a[0], a[1], a[2], a[3]);
+    }
+    this.mat.uniforms.uDryCount.value = n;
   }
 
   update(dt, camera) {
@@ -303,6 +345,21 @@ export class Effects {
     this.rain = new Rain(scene, lowQuality ? 2100 : 3800);
     this.splashes = new GroundSplashes(scene, lowQuality ? 240 : 500);
     this.softTex = softParticleTexture();
+    const dustPos = new Float32Array(340 * 3);
+    const dustRng = mulberry32(4242);
+    for (let i = 0; i < 340; i++) {
+      dustPos[i * 3] = -34 + dustRng() * 68;
+      dustPos[i * 3 + 1] = 0.4 + dustRng() * 7.2;
+      dustPos[i * 3 + 2] = -34 + dustRng() * 68;
+    }
+    const dustGeo = new THREE.BufferGeometry();
+    dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+    this.dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({
+      map: this.softTex, color: 0xffcf9a, size: 0.075, transparent: true, opacity: 0.34,
+      depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, toneMapped: false,
+    }));
+    this.dust.visible = false;
+    this.scene.add(this.dust);
     this.smokeTex = smokeTexture();
     this.decalTex = decalTexture();
     this.sparks = new ParticlePool(scene, lowQuality ? 240 : 420, this.softTex, THREE.AdditiveBlending, true);
@@ -349,6 +406,23 @@ export class Effects {
     this.addSteamVent(new THREE.Vector3(27, 0.12, 17), 0.6);
     this.addSteamVent(new THREE.Vector3(8.5, 0.12, 4.0), 0.8);
     this.addSteamVent(new THREE.Vector3(-12.0, 0.12, -8.0), 0.7);
+  }
+
+  setIndoor(indoor, dustColor = 0xffcf9a) {
+    this.indoor = !!indoor;
+    this.rain.mesh.visible = !this.indoor;
+    this.splashes.mesh.visible = !this.indoor;
+    if (this.dust) {
+      this.dust.visible = this.indoor;
+      this.dust.material.color.setHex(dustColor);
+    }
+    if (this.audio && this.audio.setIndoor) this.audio.setIndoor(this.indoor);
+  }
+
+  setDryAreas(areas) {
+    const list = areas || [];
+    this.rain.setDryAreas(list);
+    this.splashes.setDryAreas(list);
   }
 
   makeFlashTexture() {
@@ -561,6 +635,7 @@ export class Effects {
     this.time += dt;
     this.rain.update(dt, this.camera);
     this.splashes.update(dt, this.camera);
+    if (this.dust && this.dust.visible) this.dust.rotation.y += dt * 0.006;
     this.sparks.update(dt);
     this.smoke.update(dt);
     this.updateShells(dt);
